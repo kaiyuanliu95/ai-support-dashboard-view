@@ -81,8 +81,8 @@
 <script src="utils.js"></script>
 <script>
 (async function(){
-  const ticketsCSV = await fetchText('../data/tickets.csv');
-  const insights = await fetchJSON('../data/insights.json');
+  const ticketsCSV = await fetchText('data/tickets.csv');
+  const insights = await fetchJSON('data/insights.json');
   const rows = csvToObjects(ticketsCSV);
   // Normalize
   rows.forEach(r=>{
