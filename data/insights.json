@@ -1,0 +1,23 @@
+{
+  "kpi": {
+    "total_tickets": 782,
+    "closed_tickets": 734,
+    "avg_resolution_hours": 22.2,
+    "sla_compliance_percent": 82.0
+  },
+  "top_categories": [
+    {
+      "category": "Network",
+      "count": 238
+    },
+    {
+      "category": "Hardware",
+      "count": 229
+    },
+    {
+      "category": "Account",
+      "count": 162
+    }
+  ],
+  "ai_summary": "Load rising in Network since late phase; Install peaked mid-period (AP rollout). SLA generally healthy, but watch high-priority overruns. Peak traffic concentrates midweek afternoons; address backlog aging >72h."
+}
