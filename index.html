@@ -1,0 +1,276 @@
+
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>AI-Augmented IT Support Dashboard</title>
+<link rel="stylesheet" href="styles.css"/>
+</head>
+<body>
+<div class="wrapper">
+  <h1>AI-Augmented IT Support Dashboard
+    <span class="badge">Demo</span>
+    <span class="badge">GitHub Pages-ready</span>
+  </h1>
+
+  <!-- KPI STRIP -->
+  <div class="kpis card" id="kpis">
+    <div class="kpi"><div class="label">Total Tickets</div><div class="value" id="kpi-total">—</div></div>
+    <div class="kpi"><div class="label">Open Tickets</div><div class="value" id="kpi-open">—</div></div>
+    <div class="kpi"><div class="label">Closed Tickets</div><div class="value" id="kpi-closed">—</div></div>
+    <div class="kpi"><div class="label">Backlog > SLA</div><div class="value" id="kpi-overdue">—</div></div>
+    <div class="kpi"><div class="label">Avg Resolution (hrs)</div><div class="value" id="kpi-avg">—</div></div>
+    <div class="kpi"><div class="label">Median Resolution (hrs)</div><div class="value" id="kpi-med">—</div></div>
+    <div class="kpi"><div class="label">SLA Compliance</div><div class="value" id="kpi-sla">—</div></div>
+    <div class="kpi"><div class="label">Repeat Issue Share*</div><div class="value" id="kpi-repeat">—</div></div>
+  </div>
+
+  <!-- CORE TRENDS -->
+  <div class="card row-8">
+    <div class="section-title">
+      <h2>Core Trend — Daily Tickets by Category</h2>
+      <div class="legend subtle">Focus: load, mix shift</div>
+    </div>
+    <div id="chart-stacked" class="chart"></div>
+  </div>
+  <div class="card row-4">
+    <div class="section-title">
+      <h2>Backlog Aging (Open Tickets)</h2>
+      <div class="legend subtle">< 8h / 8–24h / 24–48h / 48–72h / > 72h</div>
+    </div>
+    <div id="chart-aging" class="chart"></div>
+  </div>
+
+  <!-- SECONDARY, HIGH-VALUE INSIGHTS -->
+  <div class="card row-6">
+    <div class="section-title"><h2>SLA by Category</h2><div class="legend subtle">Identify weakest domains</div></div>
+    <div id="chart-sla-cat" class="chart"></div>
+  </div>
+  <div class="card row-6">
+    <div class="section-title"><h2>Resolution Time Distribution (Closed)</h2><div class="legend subtle">Long tail = bottlenecks</div></div>
+    <div id="chart-hist" class="chart"></div>
+  </div>
+
+  <!-- HEATMAP + SITE BREAKDOWN -->
+  <div class="card row-8">
+    <div class="section-title"><h2>Workload Heatmap</h2><div class="legend subtle">Tickets by Day of Week × Hour</div></div>
+    <div id="chart-heat" class="chart"></div>
+  </div>
+  <div class="card row-4">
+    <div class="section-title"><h2>Site / Source Mix</h2><div class="legend subtle">Where load originates</div></div>
+    <div id="chart-source" class="chart"></div>
+  </div>
+
+  <!-- AI INSIGHTS + ACTIONS -->
+  <div class="card row-12">
+    <div class="section-title"><h2>AI Summary & Next Actions</h2></div>
+    <div id="ai-summary" class="subtle">—</div>
+    <hr class="sep"/>
+    <ul class="ticks" id="ai-actions"></ul>
+    <p class="subtle">* Repeat Issue Share = share of tickets from top-3 subcategories (Pareto-style signal).</p>
+  </div>
+
+  <div class="subtle" style="margin:16px 2px 28px;">
+    Data: <code>data/tickets.csv</code>. | Optional: Embed a PowerBI publish-to-web iframe below.<br/>
+    <!-- <iframe title="PowerBI" width="100%" height="420" src="YOUR_PUBLISH_TO_WEB_URL" frameborder="0" allowfullscreen="true"></iframe> -->
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/echarts@5"></script>
+<script src="utils.js"></script>
+<script>
+(async function(){
+  const ticketsCSV = await fetchText('../data/tickets.csv');
+  const insights = await fetchJSON('../data/insights.json');
+  const rows = csvToObjects(ticketsCSV);
+  // Normalize
+  rows.forEach(r=>{
+    r.created_at = r.created_at ? new Date(r.created_at.replace(' ', 'T')) : null;
+    r.closed_at = r.closed_at ? new Date(r.closed_at.replace(' ', 'T')) : null;
+    r.resolution_hours = r.resolution_hours ? parseFloat(r.resolution_hours) : null;
+    r.sla_target_hours = r.sla_target_hours ? parseFloat(r.sla_target_hours) : null;
+  });
+  const now = new Date();
+
+  // ========== KPIs ==========
+  const total = rows.length;
+  const open = rows.filter(r=>r.status==='Open').length;
+  const closed = rows.filter(r=>r.status==='Closed').length;
+  // Overdue backlog: open tickets exceeding SLA
+  const overdue = rows.filter(r=>r.status==='Open' && r.created_at && r.sla_target_hours && ( (now - r.created_at)/36e5 > r.sla_target_hours )).length;
+  // Avg / median resolution
+  const res = rows.filter(r=>r.resolution_hours!=null).map(r=>r.resolution_hours).sort((a,b)=>a-b);
+  const avg = res.length ? (res.reduce((a,b)=>a+b,0)/res.length) : 0;
+  const med = res.length ? (res[Math.floor(res.length/2)]) : 0;
+  // SLA compliance on closed
+  const slaOk = rows.filter(r=>r.status==='Closed' && r.resolution_hours!=null && r.sla_target_hours!=null && r.resolution_hours <= r.sla_target_hours).length;
+  const slaRate = closed ? Math.round(1000 * (slaOk/closed))/10 : 0;
+  // Repeat issue share: tickets in top-3 subcategories
+  const subCount = {};
+  rows.forEach(r=>{ subCount[r.subcategory] = (subCount[r.subcategory]||0)+1; });
+  const topSubs = Object.entries(subCount).sort((a,b)=>b[1]-a[1]).slice(0,3);
+  const repeatShare = Math.round(1000 * (topSubs.reduce((s,kv)=>s+kv[1],0) / total))/10;
+
+  document.getElementById('kpi-total').textContent = formatNumber(total);
+  document.getElementById('kpi-open').textContent = formatNumber(open);
+  document.getElementById('kpi-closed').textContent = formatNumber(closed);
+  document.getElementById('kpi-overdue').textContent = formatNumber(overdue);
+  document.getElementById('kpi-avg').textContent = (avg||0).toFixed(1);
+  document.getElementById('kpi-med').textContent = (med||0).toFixed(1);
+  document.getElementById('kpi-sla').textContent = slaRate + '%';
+  document.getElementById('kpi-repeat').textContent = repeatShare + '%';
+
+  // AI summary
+  document.getElementById('ai-summary').textContent = insights.ai_summary;
+
+  // Helper: group by day
+  const dayKey = d => d ? d.toISOString().slice(0,10) : null;
+  const perDay = {};
+  const cats = new Set();
+  rows.forEach(r=>{
+    const k = dayKey(r.created_at);
+    if(!k) return;
+    perDay[k] = perDay[k] || {};
+    perDay[k].__sum = (perDay[k].__sum||0)+1;
+    perDay[k][r.category] = (perDay[k][r.category]||0)+1;
+    cats.add(r.category);
+  });
+  const allDays = Object.keys(perDay).sort();
+
+  // ========== Core Trend: Stacked by Category ==========
+  const catList = Array.from(cats);
+  const stackedSeries = catList.map(c=>({
+    name:c, type:'line', stack:'tickets', smooth:true, emphasis:{focus:'series'},
+    areaStyle:{opacity:0.15},
+    data: allDays.map(d=>(perDay[d][c]||0))
+  }));
+  const st = echarts.init(document.getElementById('chart-stacked'));
+  st.setOption({
+    backgroundColor:'transparent',
+    tooltip:{trigger:'axis'},
+    legend:{textStyle:{color:'#cfe3f7'}},
+    xAxis:{type:'category',data:allDays,axisLabel:{color:'#9db0c1'}},
+    yAxis:{type:'value',axisLabel:{color:'#9db0c1'}},
+    series: stackedSeries
+  });
+
+  // ========== Aging buckets for OPEN backlog ==========
+  const buckets = {'<8h':0,'8–24h':0,'24–48h':0,'48–72h':0,'>72h':0};
+  rows.filter(r=>r.status==='Open' && r.created_at).forEach(r=>{
+    const h = (now - r.created_at)/36e5;
+    if(h<8) buckets['<8h']++;
+    else if(h<24) buckets['8–24h']++;
+    else if(h<48) buckets['24–48h']++;
+    else if(h<72) buckets['48–72h']++;
+    else buckets['>72h']++;
+  });
+  const ag = echarts.init(document.getElementById('chart-aging'));
+  ag.setOption({
+    backgroundColor:'transparent',
+    tooltip:{trigger:'axis'},
+    xAxis:{type:'category',data:Object.keys(buckets),axisLabel:{color:'#9db0c1'}},
+    yAxis:{type:'value',axisLabel:{color:'#9db0c1'}},
+    series:[{type:'bar',data:Object.values(buckets)}]
+  });
+
+  // ========== SLA by Category (closed) ==========
+  const catSLA = {};
+  rows.filter(r=>r.status==='Closed' && r.resolution_hours!=null && r.sla_target_hours!=null).forEach(r=>{
+    const c = r.category;
+    catSLA[c] = catSLA[c] || {ok:0, total:0};
+    catSLA[c].total += 1;
+    if(r.resolution_hours<=r.sla_target_hours) catSLA[c].ok += 1;
+  });
+  const catNames = Object.keys(catSLA);
+  const catVals = catNames.map(c=> Math.round(1000*(catSLA[c].ok/Math.max(1,catSLA[c].total)))/10 );
+  const sl = echarts.init(document.getElementById('chart-sla-cat'));
+  sl.setOption({
+    backgroundColor:'transparent',
+    tooltip:{trigger:'axis'},
+    xAxis:{type:'category',data:catNames,axisLabel:{color:'#9db0c1'}},
+    yAxis:{type:'value',axisLabel:{color:'#9db0c1'},max:100},
+    series:[{type:'bar',data:catVals}]
+  });
+
+  // ========== Resolution distribution (closed) ==========
+  function histogram(arr, step){
+    if(arr.length===0) return {bins:[],counts:[]};
+    const max = Math.max(...arr), min = 0;
+    const n = Math.ceil((max-min)/step);
+    const counts = new Array(n).fill(0);
+    for(const v of arr){ const idx = Math.min(n-1, Math.floor((v-min)/step)); counts[idx]+=1; }
+    const bins = new Array(n).fill(0).map((_,i)=>`${(min+i*step).toFixed(0)}–${(min+(i+1)*step).toFixed(0)}`);
+    return {bins,counts};
+  }
+  const {bins,counts} = histogram(res, 6); // 6-hour buckets
+  const hi = echarts.init(document.getElementById('chart-hist'));
+  hi.setOption({
+    backgroundColor:'transparent',
+    tooltip:{trigger:'axis'},
+    xAxis:{type:'category',data:bins,axisLabel:{color:'#9db0c1',interval:0,rotate:45}},
+    yAxis:{type:'value',axisLabel:{color:'#9db0c1'}},
+    series:[{type:'bar',data:counts}]
+  });
+
+  // ========== Heatmap: DayOfWeek x Hour ==========
+  const mat = Array.from({length:7},()=>Array(24).fill(0));
+  rows.forEach(r=>{
+    if(!r.created_at) return;
+    const d = r.created_at.getDay(); // 0=Sun
+    const h = r.created_at.getHours();
+    mat[d][h] += 1;
+  });
+  const heatData = [];
+  for(let d=0; d<7; d++) for(let h=0; h<24; h++) heatData.push([h, d, mat[d][h]]);
+  const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const he = echarts.init(document.getElementById('chart-heat'));
+  he.setOption({
+    backgroundColor:'transparent',
+    tooltip:{position:'top'},
+    grid:{height:'70%',top:'8%'},
+    xAxis:{type:'category',data:[...Array(24).keys()].map(String), splitArea:{show:true}, axisLabel:{color:'#9db0c1'}},
+    yAxis:{type:'category',data:days, splitArea:{show:true}, axisLabel:{color:'#9db0c1'}},
+    visualMap:{min:0,max:Math.max(...heatData.map(x=>x[2])), calculable:true, orient:'horizontal', left:'center', bottom:'2%'},
+    series:[{name:'Tickets', type:'heatmap', data:heatData, label:{show:false}}]
+  });
+
+  // ========== Source mix (treemap) ==========
+  const sourceCount = {};
+  rows.forEach(r=>{ sourceCount[r.source]=(sourceCount[r.source]||0)+1; });
+  const treeData = Object.entries(sourceCount).map(([name,val])=>({name, value:val}));
+  const so = echarts.init(document.getElementById('chart-source'));
+  so.setOption({
+    backgroundColor:'transparent',
+    tooltip:{formatter:(p)=> p.name + ': ' + p.value},
+    series:[{type:'treemap', data:treeData, breadcrumb:{show:false}, label:{show:true, formatter:'{b}'}}]
+  });
+
+  // ========== AI actions (heuristics) ==========
+  const weakestIdx = catVals.indexOf(Math.min(...catVals));
+  const weakestCat = catNames[weakestIdx] || '—';
+  const peakDayIdx = days.map((_,i)=>mat[i].reduce((a,b)=>a+b,0)).indexOf(Math.max(...days.map((_,i)=>mat[i].reduce((a,b)=>a+b,0))));
+  const peakHourIdx = [...Array(24).keys()].map(h=>mat.reduce((s,row)=>s+row[h],0)).indexOf(Math.max(...[...Array(24).keys()].map(h=>mat.reduce((s,row)=>s+row[h],0))));
+  const agingMaxBucket = Object.entries(buckets).sort((a,b)=>b[1]-a[1])[0];
+
+  const actions = [
+    `SLA weakest in **${weakestCat}** — schedule targeted runbooks & add peer review for this category.`,
+    `Peak load on **${days[peakDayIdx]} @ ${peakHourIdx}:00** — align roster & pre-stage spares.`,
+    `Backlog pressure: **${agingMaxBucket[0]}** bucket has ${agingMaxBucket[1]} open — triage daily.`,
+    `Top-3 subcategories drive **${repeatShare}%** of demand — publish SOP and proactive comms.`
+  ];
+  const ul = document.getElementById('ai-actions');
+  actions.forEach(a=>{
+    const li = document.createElement('li');
+    li.innerHTML = a.replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>');
+    ul.appendChild(li);
+  });
+
+  // Resize handlers
+  window.addEventListener('resize', ()=>{
+    st.resize(); ag.resize(); sl.resize(); hi.resize(); he.resize(); so.resize();
+  });
+})();
+</script>
+</body>
+</html>
